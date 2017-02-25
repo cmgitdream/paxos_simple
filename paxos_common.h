@@ -10,7 +10,6 @@
 
 #define MAX_PROPOSER_NUM 100
 
-#define THISIP "10.0.11.212"
 #define CLIENT_PORT 10010
 #define PORT_0 10020
 #define PORT_1 10021
@@ -315,13 +314,13 @@ public:
     return 0;
   }
 
-  int construct_quorum() {
+  int construct_quorum(char *ip) {
     Socket *addr0 = new Socket();   
     Socket *addr1 = new Socket();   
     Socket *addr2 = new Socket();   
-    addr0->init(THISIP, PORT_0);
-    addr1->init(THISIP, PORT_1);
-    addr2->init(THISIP, PORT_2);
+    addr0->init(ip, PORT_0);
+    addr1->init(ip, PORT_1);
+    addr2->init(ip, PORT_2);
     quorum.insert_quorum(addr0);
     quorum.insert_quorum(addr1);
     quorum.insert_quorum(addr2);
@@ -337,11 +336,11 @@ public:
     return 0;
   }
 
-  int init(int r)
+  int init(int r, char *ip)
   {
     //std::cout << ": init rank = " << r << std::endl;
     msgr->add_messenger_user(this);
-    construct_quorum();
+    construct_quorum(ip);
     member.set_quorum(&quorum);
     member.set_rank(r);
     return 0;

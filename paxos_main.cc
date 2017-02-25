@@ -9,7 +9,7 @@ using std::endl;
 
 void usage()
 {
-  std::cout << "./paxos_main <port> <rank>\n" << std::endl;
+  std::cout << "./paxos_main <ip_of_this_host> <port> <rank>\n" << std::endl;
 }
 
 
@@ -23,12 +23,13 @@ int main(int argc, char *argv[])
     usage();
     return -1;
   }
-  uint16_t port = strtoul(argv[1], NULL, 10);
-  int rank = atoi(argv[2]);
+  char *ip = argv[1];
+  uint16_t port = strtoul(argv[2], NULL, 10);
+  int rank = atoi(argv[3]);
   cout << "rank = " << rank << endl;
-  msgr.init("10.0.11.212", port);
+  msgr.init(ip, port);
   Paxos paxos(&msgr, MSG_ID_PAXOS);
-  paxos.init(rank);
+  paxos.init(rank, ip);
   msgr.run();
   cout << " success" << std::endl;
   return 0;
