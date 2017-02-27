@@ -6,6 +6,9 @@
 #include <set>
 #include <map>
 #include <utility>
+#include <sys/stat.h>
+#include <sys/types.h>
+#include <unistd.h>
 #include "paxos_messenger.h"
 
 #define MAX_PROPOSER_NUM 100
@@ -15,11 +18,56 @@
 #define PORT_1 10021
 #define PORT_2 10022
 
+#define FILE_MODE 0644
+#define DIR_MODE 0755
+#define PERSIST_DIR "/var/lib/paxos"
+#define MEMBER_PREFIX "member"
+#define INSTANCE_PREFIX "instance"
+#define PROPOSER_PREFIX "proposer"
+#define ACCEPTER_PREFIX "accepter"
+
+#define INIT_INSTANCE_ID 0
+#define INSTANCE_LIMITED 100
+#define INSTANCE_LIMITED_STRING "100"
+#define LIMITED_PREFIX "limited"
+#define CURRENT_INSTANCE_PREFIX "currentid"
+
+/*
+ /var/lib/paxos/member_0
+ /var/lib/paxos/member_0/limited
+ "100"
+ /var/lib/paxos/member_0/currentid
+ "1"
+
+ /var/lib/paoxs/member_0/instance_1/proposer_0
+ encode:
+ {
+   sent_pn;
+ }
+ /var/lib/paoxs/member_0/instance_1/accepter_0
+ encode:
+ {
+   responsed_pn;
+   accepted_pn;
+   accepted_value;
+ }
+ *
+ *
+ * */
+
 typedef enum paxos_type {
   PAXOS_TYPE_PROPOSER,
   PAXOS_TYPE_ACCEPTER,
   PAXOS_TYPE_LEARNER
 } paxos_type;
+
+int create_dir(char *path);
+int write_data(int fd, char *buf, off_t off, uint64_t len);
+int write_data2(char *path, char *buf, off_t off, uint64_t len);
+int write_num(char *path, uint64_t num);
+int read_data(int fd, char *buf, off_t off, uint64_t len);
+int read_data2(char *path, char *buf, off_t off, uint64_t len);
+int read_num(char *path, uint64_t *num);
 
 class Quorum {
   // rank, address
@@ -55,6 +103,8 @@ public:
   virtual ~PaxosRole() {};
   void set_member(PaxosMember *mbr) { member = mbr; }
   void set_rank(int r) { rank = r; }
+  virtual int load_persist_data() = 0;
+  virtual int write_persist_data() = 0;
 };
 
 class Proposer : public PaxosRole {
@@ -81,11 +131,54 @@ public:
       qcount(1), msgr(_msgr),showed(false)
   {}
   ~Proposer() {}
+  int encode_persist(char *buf, int len)
+  {
+    assert(len >= sizeof(uint64_t));
+    memcpy((void *)buf, (void *)&sent_pn, sizeof(uint64_t));
+  }
+  int decode_persist(char *buf, int len)
+  {
+    assert(len >= sizeof(uint64_t));
+    memcpy((void *)&sent_pn, (void *)buf, sizeof(uint64_t));
+  }
   int load_persist_data()
   {
     // load data from disk, eg. file, kv
-    sent_pn = MAX_PROPOSER_NUM;
-    instance_id = 1;
+    int total = sizeof(sent_pn);
+    char buf[32];
+    memset(buf, '\0', 32);
+    char path[64];
+    memset(path, '\0', 64);
+    // /var/lib/paxos/member_<rank>/instance_<id>/proposer_<rank>
+    int r = snprintf(path, 64, "%s/%s_%d/%s_%lu/%s_%d",
+	PERSIST_DIR, MEMBER_PREFIX, rank, INSTANCE_PREFIX, instance_id,
+	PROPOSER_PREFIX, rank);
+    if (r < 0)
+      return r;
+    r = read_data2(path, buf, 0, total);
+    if (r < 0)
+      return r;
+    decode_persist(buf, total);
+    std::cout << __func__ << ": after decode_persit, sent_pn = " << sent_pn << std::endl;
+    return 0;
+  }
+
+  int write_persist_data() {
+    int total = sizeof(sent_pn);
+    char buf[32];
+    char path[64];
+    memset(path, '\0', 64);
+    // /var/lib/paxos/member_<rank>/instance_<id>/proposer_<rank>
+    int r = snprintf(path, 64, "%s/%s_%d/%s_%lu/%s_%d",
+	PERSIST_DIR, MEMBER_PREFIX, rank, INSTANCE_PREFIX, instance_id,
+	PROPOSER_PREFIX, rank);
+    if (r < 0)
+      return r;
+    encode_persist(buf, total);
+    r = write_data2(path, buf, 0, total);
+    if (r < 0)
+      return r;
+    return 0;
   }
 
   uint64_t gen_pn(uint64_t response_pn) {
@@ -127,6 +220,84 @@ public:
       instance_id(0), msgr(_msgr)
   {}
   ~Accepter() {}
+  uint32_t get_encode_len() {
+    return 2*sizeof(uint64_t)+sizeof(uint32_t) + accepted_value.length();
+  }
+  int encode_persist(char *buf, int length)
+  {
+    uint32_t pos = 0;
+    memcpy((void *)buf, (void *)&responsed_pn, sizeof(uint64_t));
+    pos += sizeof(uint64_t);
+    memcpy((void *)(buf + pos), (void *)&accepted_pn, sizeof(uint64_t));
+    pos += sizeof(uint64_t);
+    uint32_t len = accepted_value.length();
+    memcpy((void *)(buf + pos), (void *)&len, sizeof(uint32_t));
+    pos += sizeof(uint32_t);
+    memcpy((void *)(buf + pos), (void *)accepted_value.c_str(), len);
+    return 0; 
+  }
+  int decode_persist(char *buf, int length)
+  {
+    uint32_t pos = 0;
+    uint32_t len = 0;
+    memcpy((void *)&responsed_pn, (void *)buf, sizeof(uint64_t));
+    pos += sizeof(uint64_t);
+    memcpy((void *)&accepted_pn, (void *)(buf + pos), sizeof(uint64_t));
+    pos += sizeof(uint64_t);
+    memcpy((void *)&len, (void *)(buf + pos), sizeof(uint32_t));
+    pos += sizeof(uint32_t);
+    char *str = new char[len + 1];
+    if (str == NULL)
+      return -1;
+    str[len] = '\0';
+    memcpy((void *)str, (void *)(buf + pos), len);
+    accepted_value = str;
+    delete [] str;
+    return 0; 
+  }
+  int load_persist_data()
+  {
+    // load data from disk, eg. file, kv
+    int total = get_encode_len();
+    char *buf = new char[total];
+    if (buf == NULL)
+      return -1;
+    memset(buf, '\0', total);
+    char path[64];
+    memset(path, '\0', 64);
+    // /var/lib/paxos/member_<rank>/instance_<id>/proposer_<rank>
+    int r = snprintf(path, 64, "%s/%s_%d/%s_%lu/%s_%d",
+	PERSIST_DIR, MEMBER_PREFIX, rank, INSTANCE_PREFIX, instance_id,
+	PROPOSER_PREFIX, rank);
+    r = read_data2(path, buf, 0, total);
+    if (r < 0) {
+      delete [] buf;
+      return r;
+    }
+    decode_persist(buf, total);
+    delete [] buf;
+    return 0;
+  }
+
+  int write_persist_data() {
+    int total = get_encode_len();
+    char *buf = new char[total];
+    if (buf == NULL)
+      return -1;
+    char path[64];
+    memset(path, '\0', 64);
+    // /var/lib/paxos/member_<rank>/instance_<id>/proposer_<rank>
+    int r = snprintf(path, 64, "%s/%s_%d/%s_%lu/%s_%d",
+	PERSIST_DIR, MEMBER_PREFIX, rank, INSTANCE_PREFIX, instance_id,
+	PROPOSER_PREFIX, rank);
+    encode_persist(buf, total);
+    r = write_data2(path, buf, 0, total);
+    if (r < 0) {
+      delete [] buf;
+      return r;
+    }
+    return 0;
+  }
  
   // response to proposer with highest accepted pn if trust current proposer
   int process_prepare_request(PaxosPrepareRequest *m) {
@@ -147,6 +318,7 @@ public:
 	<< ": responsed_pn = " << responsed_pn
 	<< ", accepted_pn = " << accepted_pn
 	<< std::endl;
+      write_persist_data();
 /*
       if (!accepted_pn) {
  	reply->responsed_pn = responsed_pn;
@@ -202,6 +374,7 @@ public:
       if (!accepted_pn) {
 	accepted_pn = m->accept_pn;
 	accepted_value = m->accept_value;	
+	write_persist_data();
       }
       std::cout << "Accepter::" << __func__
 	<< ": accept proposer_rank = " << m->rank << ", accept_pn = " << m->accept_pn
@@ -231,12 +404,12 @@ class PaxosMember {
 public:
   Proposer proposer;
   Accepter accepter;
-  uint64_t id; //instance id
+  uint64_t instance_id; //instance id
   int rank;
   Messenger *msgr;
   Quorum *quorum;
   PaxosMember(Messenger *_msgr)
-    : msgr(_msgr), proposer(_msgr), id(0), rank(-1),
+    : msgr(_msgr), proposer(_msgr), instance_id(0), rank(-1),
       accepter(_msgr), quorum(NULL)
   {
     proposer.set_member(this);
@@ -247,6 +420,80 @@ public:
     rank = r;
     proposer.set_rank(r);
     accepter.set_rank(r);
+  }
+  int mkfs() {
+    assert(rank != -1);
+    char path[64];
+    char *limited_file;
+    memset(path, '\0', 64);
+    int r = snprintf(path, 64, "%s/%s_%d", PERSIST_DIR, MEMBER_PREFIX, rank);
+    if (r < 0)
+      return r;
+    r = create_dir(PERSIST_DIR);
+    if (r < 0 && errno != EEXIST) { 
+      std::cout << __func__ << ": create dir " << path
+	<< " failed, errno = " << errno << "(" << strerror(errno) << ")" << std::endl;
+      return r;
+    }
+    r = create_dir(path);
+    if (r < 0 && errno != EEXIST) { 
+      std::cout << __func__ << ": create dir " << path
+	<< " failed, errno = " << errno << "(" << strerror(errno) << ")" << std::endl;
+      return r;
+    }
+    int len = strlen(path);
+    r = sprintf(path+len, "/%s", LIMITED_PREFIX);
+    if (r < 0)
+      return r;
+    std::cout << __func__ << ": create " << path << std::endl;
+    r = write_num(path, INSTANCE_LIMITED);
+    if (r < 0)
+      return r;
+    uint64_t num2 = 0;
+    r = read_num(path, &num2);
+    r = sprintf(path+len, "/%s", CURRENT_INSTANCE_PREFIX);
+    if (r < 0)
+      return r;
+    std::cout << __func__ << ": create " << path << std::endl;
+    r = write_num(path, INIT_INSTANCE_ID);
+    if (r < 0)
+      return r;
+    return 0; 
+  }
+  int load_instance_id()
+  {
+    char path[64];
+    memset(path, '\0', 64);
+    int r = snprintf(path, 64, "%s/%s_%d/%s",
+	PERSIST_DIR, MEMBER_PREFIX, rank, CURRENT_INSTANCE_PREFIX);
+    if (r < 0)
+      return r;
+    uint64_t num = -1;
+    r = read_num(path, &num);
+    if (r < 0)
+      return r;
+    instance_id = num;
+    return 0; 
+  }
+  int load_data()
+  {
+    char path[64];
+    memset(path, '\0', 64);
+    int r = snprintf(path, 64, "%s/%s_%d/%s_%lu",
+	PERSIST_DIR, MEMBER_PREFIX, rank, INSTANCE_PREFIX, instance_id);
+    if (r < 0)
+      return r;
+    r = create_dir(path);
+    if (r < 0) {
+      std::cout << __func__ << ": create dir " << path << ", failed, errno = " << errno << std::endl;
+      return r;
+    }
+    std::cout << __func__ << ": proposer.rank = " << proposer.rank
+	<< ", accepter.rank = " << accepter.rank
+	<< std::endl;
+    proposer.load_persist_data();
+    accepter.load_persist_data();
+    return 0;
   }
   int process_command(PaxosCommandRequest *req)
   {
@@ -338,12 +585,19 @@ public:
 
   int init(int r, char *ip)
   {
-    //std::cout << ": init rank = " << r << std::endl;
     msgr->add_messenger_user(this);
     construct_quorum(ip);
     member.set_quorum(&quorum);
     member.set_rank(r);
+    member.load_instance_id();
+    member.load_data();
     return 0;
+  }
+
+  int mkfs(int r)
+  {
+    member.set_rank(r); 
+    member.mkfs();
   }
 
   int run()

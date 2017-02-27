@@ -3,6 +3,102 @@
 #include <assert.h>
 #include "paxos_common.h"
 
+
+int create_dir(char *path)
+{
+  int ret = mkdir(path, DIR_MODE);
+  if (ret < 0 && errno != EEXIST) 
+    return ret;
+  return 0;
+}
+
+int write_data(int fd, char *buf, off_t off, uint64_t len)
+{
+  int r;
+  if (off > 0) {
+    r = lseek(fd, off, SEEK_CUR);
+    if (r < 0)
+      return -1;
+  }
+  r = write(fd, buf, len);
+  if (r < 0)
+    return -1;
+  return r;
+}
+
+int write_data2(char *path, char *buf, off_t off, uint64_t len)
+{
+  int fd, r;
+  fd = open(path, O_CREAT|O_RDWR, FILE_MODE);
+  if (fd < 0)
+    return -1;
+  r = write_data(fd, buf, off, len);
+  close(fd);
+  return r;
+}
+
+int write_num(char *path, uint64_t num)
+{
+  int fd, r;
+  fd = open(path, O_CREAT|O_RDWR, FILE_MODE);
+  if (fd < 0)
+    return -1;
+
+  char *buf = (char *)&num;
+  int len = sizeof(uint64_t)/sizeof(char);
+  
+  r = write_data(fd, buf, 0, len);
+  if (r < 0)
+    return r;
+  close(fd);
+  return r;
+}
+
+
+int read_data(int fd, char *buf, off_t off, uint64_t len)
+{
+  int r;
+  if (off > 0) {
+    r = lseek(fd, off, SEEK_CUR);
+    if (r < 0)
+      return -1;
+  }
+  r = read(fd, buf, len);
+  if (r < 0)
+    return -1;
+  return r;
+}
+
+int read_data2(char *path, char *buf, off_t off, uint64_t len)
+{
+  int fd, r;
+  fd = open(path, O_CREAT|O_RDWR, FILE_MODE);
+  if (fd < 0)
+    return -1;
+  r = read_data(fd, buf, 0, len);
+  if (r < 0)
+    return r;
+  close(fd);
+  return r;
+}
+
+int read_num(char *path, uint64_t *num)
+{
+  int fd, r;
+  fd = open(path, O_RDWR, FILE_MODE);
+  if (fd < 0)
+    return -1;
+  
+  char *buf = (char *)num;
+  int len = sizeof(uint64_t)/sizeof(char);
+  r = read_data(fd, buf, 0, len);
+  if (r < 0)
+    return r;
+  //std::cout << __func__ << ": num = " << *num << std::endl;  
+  close(fd);
+  return r;
+}
+
 int Proposer::send_prepare_request(int epoll_fd, int sock_fd, uint64_t send_pn) {
     Message *m = create_message(PAXOS_PREPARE_REQUEST);
     PaxosPrepareRequest *req = (PaxosPrepareRequest *)m;
@@ -52,6 +148,7 @@ int Proposer::broadcast_prepare_request(int efd, uint64_t pn)
       if (r < 0)
         return -1;
     }
+    write_persist_data();
     return 0;
   }
 
