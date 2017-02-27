@@ -1,4 +1,4 @@
 
 make clean
 
-make paxos_main paxos_client
+make -j8 paxos_main paxos_client
