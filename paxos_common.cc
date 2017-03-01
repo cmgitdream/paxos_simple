@@ -72,7 +72,7 @@ int read_data(int fd, char *buf, off_t off, uint64_t len)
 int read_data2(char *path, char *buf, off_t off, uint64_t len)
 {
   int fd, r;
-  fd = open(path, O_CREAT|O_RDWR, FILE_MODE);
+  fd = open(path, O_RDWR, FILE_MODE);
   if (fd < 0)
     return -1;
   r = read_data(fd, buf, 0, len);
@@ -148,6 +148,8 @@ int Proposer::broadcast_prepare_request(int efd, uint64_t pn)
       if (r < 0)
         return -1;
     }
+    std::cout << __func__ << ": proposer rank = " << rank
+	<< ", will write persist data" << std::endl;
     write_persist_data();
     return 0;
   }

@@ -268,7 +268,7 @@ public:
     // /var/lib/paxos/member_<rank>/instance_<id>/proposer_<rank>
     int r = snprintf(path, 64, "%s/%s_%d/%s_%lu/%s_%d",
 	PERSIST_DIR, MEMBER_PREFIX, rank, INSTANCE_PREFIX, instance_id,
-	PROPOSER_PREFIX, rank);
+	ACCEPTER_PREFIX, rank);
     r = read_data2(path, buf, 0, total);
     if (r < 0) {
       delete [] buf;
@@ -289,7 +289,7 @@ public:
     // /var/lib/paxos/member_<rank>/instance_<id>/proposer_<rank>
     int r = snprintf(path, 64, "%s/%s_%d/%s_%lu/%s_%d",
 	PERSIST_DIR, MEMBER_PREFIX, rank, INSTANCE_PREFIX, instance_id,
-	PROPOSER_PREFIX, rank);
+	ACCEPTER_PREFIX, rank);
     encode_persist(buf, total);
     r = write_data2(path, buf, 0, total);
     if (r < 0) {
