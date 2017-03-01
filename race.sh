@@ -1,18 +1,17 @@
 #!/bin/bash
 
 N=0
-echo $#
-if [ $# -lt 1 ];then
-  echo "./race.sh <count>"
+if [ $# -lt 2 ];then
+  echo "./race.sh <ip_of_this_host> <count>"
   exit
 fi
-N=$1
+ip=$1
+N=$2
 dir=`pwd`
 start=10020
 end=10022
 port=0
 cmd=
-ip=10.0.11.212
 pn=1
 for ((port = $start; port < $start + $N; port++))
 do
